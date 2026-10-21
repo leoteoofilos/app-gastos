@@ -1,12 +1,21 @@
-name: Gerar APK
+name: Gerar APK e Site
 
 on:
   workflow_dispatch:
   push:
     branches: [main]
 
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
 jobs:
-  build:
+  apk:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -20,10 +29,14 @@ jobs:
         with:
           channel: stable
 
-      - name: Criar projeto Flutter
+      - name: Criar projeto Android
         run: |
           flutter create --platforms=android --project-name gerenciador_gastos app
           cp src/main.dart app/lib/main.dart
+          for d in mdpi hdpi xhdpi xxhdpi xxxhdpi; do
+            cp icones/android/mipmap-$d/ic_launcher.png app/android/app/src/main/res/mipmap-$d/ic_launcher.png
+          done
+          sed -i 's/android:label="[^"]*"/android:label="Meus Gastos"/' app/android/app/src/main/AndroidManifest.xml
 
       - name: Instalar dependencia
         working-directory: app
@@ -37,3 +50,42 @@ jobs:
         with:
           name: app-gastos-apk
           path: app/build/app/outputs/flutter-apk/app-release.apk
+
+  web:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+
+      - name: Criar projeto Web
+        run: |
+          flutter create --platforms=web --project-name gerenciador_gastos app
+          cp src/main.dart app/lib/main.dart
+          cp icones/web/Icon-*.png app/web/icons/
+          cp icones/web/favicon.png app/web/favicon.png
+          sed -i 's/gerenciador_gastos/Meus Gastos/g' app/web/index.html app/web/manifest.json
+
+      - name: Instalar dependencia
+        working-directory: app
+        run: flutter pub add shared_preferences
+
+      - name: Gerar site
+        working-directory: app
+        run: flutter build web --release --base-href "/${{ github.event.repository.name }}/"
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: app/build/web
+
+  deploy:
+    needs: web
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4
