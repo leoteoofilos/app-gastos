@@ -1,8 +1,16 @@
 import 'dart:convert';
+import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 void main() => runApp(const MeuApp());
+
+const corPrincipal = Color(0xFF00796B);
+const diasSemana = ['Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb', 'Dom'];
+const nomesMeses = [
+  'Jan', 'Fev', 'Mar', 'Abr', 'Mai', 'Jun',
+  'Jul', 'Ago', 'Set', 'Out', 'Nov', 'Dez'
+];
 
 class MeuApp extends StatelessWidget {
   const MeuApp({super.key});
@@ -12,15 +20,101 @@ class MeuApp extends StatelessWidget {
     return MaterialApp(
       title: 'Meus Gastos',
       debugShowCheckedModeBanner: false,
-      theme: ThemeData(
-        colorSchemeSeed: Colors.teal,
-        useMaterial3: true,
-      ),
-      home: const TelaInicial(),
+      theme: ThemeData(colorSchemeSeed: corPrincipal, useMaterial3: true),
+      home: const Capa(),
     );
   }
 }
 
+// ---------------------------------------------------------------------------
+// CAPA (tela de abertura)
+// ---------------------------------------------------------------------------
+class Capa extends StatefulWidget {
+  const Capa({super.key});
+
+  @override
+  State<Capa> createState() => _CapaState();
+}
+
+class _CapaState extends State<Capa> {
+  bool _saiu = false;
+
+  @override
+  void initState() {
+    super.initState();
+    Future.delayed(const Duration(milliseconds: 2500), _entrar);
+  }
+
+  void _entrar() {
+    if (!mounted || _saiu) return;
+    _saiu = true;
+    Navigator.of(context).pushReplacement(
+      PageRouteBuilder(
+        pageBuilder: (_, __, ___) => const TelaInicial(),
+        transitionsBuilder: (_, anim, __, child) =>
+            FadeTransition(opacity: anim, child: child),
+        transitionDuration: const Duration(milliseconds: 600),
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      body: GestureDetector(
+        behavior: HitTestBehavior.opaque,
+        onTap: _entrar,
+        child: Container(
+          width: double.infinity,
+          decoration: const BoxDecoration(
+            gradient: LinearGradient(
+              begin: Alignment.topLeft,
+              end: Alignment.bottomRight,
+              colors: [Color(0xFF004D40), Color(0xFF26A69A)],
+            ),
+          ),
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: const [
+              CircleAvatar(
+                radius: 70,
+                backgroundColor: Color.fromRGBO(255, 255, 255, 0.15),
+                child: Icon(Icons.bar_chart_rounded,
+                    size: 84, color: Colors.white),
+              ),
+              SizedBox(height: 28),
+              Text(
+                'Meus Gastos',
+                style: TextStyle(
+                  color: Colors.white,
+                  fontSize: 34,
+                  fontWeight: FontWeight.bold,
+                  letterSpacing: 1,
+                ),
+              ),
+              SizedBox(height: 8),
+              Text(
+                'Controle seu dinheiro, semana a semana',
+                style: TextStyle(color: Colors.white70, fontSize: 16),
+              ),
+              SizedBox(height: 48),
+              SizedBox(
+                width: 28,
+                height: 28,
+                child: CircularProgressIndicator(
+                    strokeWidth: 3, color: Colors.white),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+// ---------------------------------------------------------------------------
+// MODELO E FUNÇÕES AUXILIARES
+// ---------------------------------------------------------------------------
 class Gasto {
   final String descricao;
   final double valor;
@@ -46,6 +140,71 @@ String dataBr(DateTime d) =>
 double? lerValor(String texto) =>
     double.tryParse(texto.trim().replaceAll(',', '.'));
 
+// ---------------------------------------------------------------------------
+// GRÁFICO DE BARRAS (sem bibliotecas externas)
+// ---------------------------------------------------------------------------
+class GraficoBarras extends StatelessWidget {
+  final List<String> rotulos;
+  final List<double> valores;
+  final int destaque;
+  final Color cor;
+
+  const GraficoBarras({
+    super.key,
+    required this.rotulos,
+    required this.valores,
+    required this.destaque,
+    required this.cor,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final maior = valores.fold<double>(0, (a, b) => a > b ? a : b);
+    const alturaMax = 110.0;
+    final estilo = Theme.of(context).textTheme.labelSmall;
+
+    return SizedBox(
+      height: 170,
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.end,
+        children: List.generate(valores.length, (i) {
+          final v = valores[i];
+          final h = maior == 0 ? 3.0 : math.max(3.0, alturaMax * v / maior);
+          final atual = i == destaque;
+          return Expanded(
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.end,
+              children: [
+                Text(v == 0 ? '' : v.toStringAsFixed(0), style: estilo),
+                const SizedBox(height: 4),
+                Container(
+                  height: h,
+                  margin: const EdgeInsets.symmetric(horizontal: 5),
+                  decoration: BoxDecoration(
+                    color: atual ? cor : cor.withAlpha(90),
+                    borderRadius:
+                        const BorderRadius.vertical(top: Radius.circular(6)),
+                  ),
+                ),
+                const SizedBox(height: 6),
+                Text(
+                  rotulos[i],
+                  style: estilo?.copyWith(
+                    fontWeight: atual ? FontWeight.bold : FontWeight.normal,
+                  ),
+                ),
+              ],
+            ),
+          );
+        }),
+      ),
+    );
+  }
+}
+
+// ---------------------------------------------------------------------------
+// TELA PRINCIPAL
+// ---------------------------------------------------------------------------
 class TelaInicial extends StatefulWidget {
   const TelaInicial({super.key});
 
@@ -81,22 +240,51 @@ class _TelaInicialState extends State<TelaInicial> {
         'gastos', gastos.map((g) => jsonEncode(g.toJson())).toList());
   }
 
-  double get gastoMes {
+  // --- cálculos ---------------------------------------------------------
+
+  DateTime get _inicioSemana {
     final agora = DateTime.now();
-    return gastos
-        .where((g) => g.data.year == agora.year && g.data.month == agora.month)
-        .fold(0.0, (soma, g) => soma + g.valor);
+    // semana começa na segunda-feira
+    return DateTime(agora.year, agora.month, agora.day - (agora.weekday - 1));
   }
 
-  double get gastoSemana {
-    final agora = DateTime.now();
-    final hoje = DateTime(agora.year, agora.month, agora.day);
-    // semana começa na segunda-feira
-    final inicio = hoje.subtract(Duration(days: hoje.weekday - 1));
-    return gastos
-        .where((g) => !g.data.isBefore(inicio))
-        .fold(0.0, (soma, g) => soma + g.valor);
+  /// Gasto de cada dia da semana atual (índice 0 = segunda).
+  List<double> get gastosPorDia {
+    final inicio = _inicioSemana;
+    final fim = DateTime(inicio.year, inicio.month, inicio.day + 7);
+    final lista = List<double>.filled(7, 0);
+    for (final g in gastos) {
+      if (!g.data.isBefore(inicio) && g.data.isBefore(fim)) {
+        lista[g.data.weekday - 1] += g.valor;
+      }
+    }
+    return lista;
   }
+
+  double get gastoSemana => gastosPorDia.fold<double>(0, (a, b) => a + b);
+
+  /// Gasto de cada um dos últimos 6 meses (o último é o mês atual).
+  List<double> get gastosUltimosMeses {
+    final agora = DateTime.now();
+    return List.generate(6, (i) {
+      final m = DateTime(agora.year, agora.month - (5 - i));
+      return gastos
+          .where((g) => g.data.year == m.year && g.data.month == m.month)
+          .fold<double>(0, (soma, g) => soma + g.valor);
+    });
+  }
+
+  List<String> get rotulosMeses {
+    final agora = DateTime.now();
+    return List.generate(6, (i) {
+      final m = DateTime(agora.year, agora.month - (5 - i));
+      return nomesMeses[m.month - 1];
+    });
+  }
+
+  double get gastoMes => gastosUltimosMeses.last;
+
+  // --- diálogos -----------------------------------------------------------
 
   Future<void> _editarSalario() async {
     final ctrl = TextEditingController(
@@ -198,10 +386,16 @@ class _TelaInicialState extends State<TelaInicial> {
     }
   }
 
+  // --- interface ----------------------------------------------------------
+
   @override
   Widget build(BuildContext context) {
     final sobra = salario - gastoMes;
     final cores = Theme.of(context).colorScheme;
+    final porcentagem =
+        salario > 0 ? (gastoMes / salario).clamp(0.0, 1.0).toDouble() : 0.0;
+    final porDia = gastosPorDia;
+    final porMes = gastosUltimosMeses;
 
     return Scaffold(
       appBar: AppBar(title: const Text('Meus Gastos')),
@@ -210,10 +404,11 @@ class _TelaInicialState extends State<TelaInicial> {
         icon: const Icon(Icons.add),
         label: const Text('Gasto'),
       ),
-      body: Column(
+      body: ListView(
+        padding: const EdgeInsets.fromLTRB(16, 8, 16, 100),
         children: [
+          // Resumo
           Card(
-            margin: const EdgeInsets.all(16),
             child: Padding(
               padding: const EdgeInsets.all(16),
               child: Column(
@@ -224,7 +419,8 @@ class _TelaInicialState extends State<TelaInicial> {
                     subtitle: Text(moeda(salario),
                         style: Theme.of(context).textTheme.headlineSmall),
                     trailing: IconButton(
-                        icon: const Icon(Icons.edit), onPressed: _editarSalario),
+                        icon: const Icon(Icons.edit),
+                        onPressed: _editarSalario),
                   ),
                   const Divider(),
                   _linha('Gasto na semana', moeda(gastoSemana)),
@@ -234,45 +430,113 @@ class _TelaInicialState extends State<TelaInicial> {
                     moeda(sobra),
                     cor: sobra < 0 ? cores.error : Colors.green.shade700,
                   ),
+                  const SizedBox(height: 12),
+                  ClipRRect(
+                    borderRadius: BorderRadius.circular(8),
+                    child: LinearProgressIndicator(
+                      value: porcentagem,
+                      minHeight: 10,
+                      color: porcentagem >= 0.9 ? cores.error : corPrincipal,
+                    ),
+                  ),
+                  const SizedBox(height: 6),
+                  Text(
+                    salario > 0
+                        ? '${(gastoMes / salario * 100).toStringAsFixed(0)}% do salário gasto neste mês'
+                        : 'Informe seu salário para ver a porcentagem gasta',
+                    style: Theme.of(context).textTheme.bodySmall,
+                  ),
                 ],
               ),
             ),
           ),
-          Expanded(
-            child: gastos.isEmpty
-                ? const Center(child: Text('Nenhum gasto ainda.'))
-                : ListView.builder(
-                    itemCount: gastos.length,
-                    itemBuilder: (ctx, i) {
-                      final g = gastos[i];
-                      return Dismissible(
-                        key: ValueKey('${g.data.toIso8601String()}-$i-${g.descricao}'),
-                        direction: DismissDirection.endToStart,
-                        background: Container(
-                          color: cores.error,
-                          alignment: Alignment.centerRight,
-                          padding: const EdgeInsets.only(right: 20),
-                          child: const Icon(Icons.delete, color: Colors.white),
-                        ),
-                        onDismissed: (_) {
-                          setState(() => gastos.removeAt(i));
-                          _salvar();
-                        },
-                        child: ListTile(
-                          title: Text(g.descricao),
-                          subtitle: Text(dataBr(g.data)),
-                          trailing: Text(moeda(g.valor),
-                              style: const TextStyle(
-                                  fontWeight: FontWeight.bold)),
-                        ),
-                      );
-                    },
-                  ),
+
+          // Gráfico semanal
+          _cartaoGrafico(
+            titulo: 'Gastos da semana',
+            subtitulo: 'Total: ${moeda(gastoSemana)} (segunda a domingo)',
+            grafico: GraficoBarras(
+              rotulos: diasSemana,
+              valores: porDia,
+              destaque: DateTime.now().weekday - 1,
+              cor: corPrincipal,
+            ),
           ),
+
+          // Gráfico mensal
+          _cartaoGrafico(
+            titulo: 'Gastos por mês',
+            subtitulo: 'Últimos 6 meses',
+            grafico: GraficoBarras(
+              rotulos: rotulosMeses,
+              valores: porMes,
+              destaque: 5,
+              cor: Colors.orange.shade700,
+            ),
+          ),
+
+          // Lista
+          const Padding(
+            padding: EdgeInsets.fromLTRB(4, 16, 4, 8),
+            child: Text('Gastos recentes',
+                style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+          ),
+          if (gastos.isEmpty)
+            const Padding(
+              padding: EdgeInsets.all(24),
+              child: Center(child: Text('Nenhum gasto ainda.')),
+            )
+          else
+            ...gastos.map(
+              (g) => Dismissible(
+                key: ObjectKey(g),
+                direction: DismissDirection.endToStart,
+                background: Container(
+                  color: cores.error,
+                  alignment: Alignment.centerRight,
+                  padding: const EdgeInsets.only(right: 20),
+                  child: const Icon(Icons.delete, color: Colors.white),
+                ),
+                onDismissed: (_) {
+                  setState(() => gastos.remove(g));
+                  _salvar();
+                },
+                child: ListTile(
+                  title: Text(g.descricao),
+                  subtitle: Text(dataBr(g.data)),
+                  trailing: Text(moeda(g.valor),
+                      style: const TextStyle(fontWeight: FontWeight.bold)),
+                ),
+              ),
+            ),
         ],
       ),
     );
   }
+
+  Widget _cartaoGrafico({
+    required String titulo,
+    required String subtitulo,
+    required Widget grafico,
+  }) =>
+      Card(
+        margin: const EdgeInsets.only(top: 12),
+        child: Padding(
+          padding: const EdgeInsets.all(16),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(titulo,
+                  style: const TextStyle(
+                      fontSize: 16, fontWeight: FontWeight.bold)),
+              const SizedBox(height: 2),
+              Text(subtitulo, style: Theme.of(context).textTheme.bodySmall),
+              const SizedBox(height: 16),
+              grafico,
+            ],
+          ),
+        ),
+      );
 
   Widget _linha(String titulo, String valor, {Color? cor}) => Padding(
         padding: const EdgeInsets.symmetric(vertical: 4),
